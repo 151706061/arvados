@@ -514,23 +514,23 @@ class ProjectsTest < ActionDispatch::IntegrationTest
 
   [
     ['project_with_10_pipelines', 10, 0],
-    ['project_with_2_pipelines_and_60_jobs', 2, 60],
+    ['project_with_2_pipelines_and_60_crs', 2, 60],
     ['project_with_25_pipelines', 25, 0],
-  ].each do |project_name, num_pipelines, num_jobs|
-    test "scroll pipeline instances tab for #{project_name} with #{num_pipelines} pipelines and #{num_jobs} jobs" do
-      item_list_parameter = "Jobs_and_pipelines"
+  ].each do |project_name, num_pipelines, num_crs|
+    test "scroll pipeline instances tab for #{project_name} with #{num_pipelines} pipelines and #{num_crs} container requests" do
+      item_list_parameter = "Pipelines_and_processes"
       scroll_setup project_name,
-                   num_pipelines + num_jobs,
+                   num_pipelines + num_crs,
                    item_list_parameter
       # check the general scrolling and the pipelines
       scroll_items_check num_pipelines,
                          "pipeline_",
                          item_list_parameter,
                          'tr[data-kind="arvados#pipelineInstance"]'
-      # Check job count separately
-      jobs_found = page.all('tr[data-kind="arvados#job"]')
-      found_job_count = jobs_found.count
-      assert_equal num_jobs, found_job_count, 'Did not find expected number of jobs'
+      # Check container request count separately
+      crs_found = page.all('tr[data-kind="arvados#containerRequest"]')
+      found_cr_count = crs_found.count
+      assert_equal num_crs, found_cr_count, 'Did not find expected number of container requests'
     end
   end
 
@@ -618,8 +618,8 @@ class ProjectsTest < ActionDispatch::IntegrationTest
       assert_no_selector 'li.disabled', text: 'Copy selected'
     end
 
-    # Go to Jobs and pipelines tab and assert none selected
-    click_link 'Jobs and pipelines'
+    # Go to Pipelines and processes tab and assert none selected
+    click_link 'Pipelines and processes'
     wait_for_ajax
 
     # Since this is the first visit to this tab, all selection options should be disabled
@@ -735,6 +735,29 @@ class ProjectsTest < ActionDispatch::IntegrationTest
     find("#projects-menu").click
     within('.dropdown-menu') do
       assert_no_selector 'li', text: 'Unrestricted public data'
+    end
+  end
+
+  [
+    ['Two Part Pipeline Template', 'part-one', 'Provide a value for the following'],
+    ['Workflow with input specifications', 'this work has inputs specified', 'This container is uncommitted'],
+  ].each do |template_name, preview_txt, process_txt|
+    test "run a process using template #{template_name} in a project" do
+      project = api_fixture('groups')['aproject']
+      visit page_with_token 'active', '/projects/' + project['uuid']
+
+      find('.btn', text: 'Run a pipeline').click
+
+      # in the chooser, verify preview and click Next button
+      within('.modal-dialog') do
+        find('.selectable', text: template_name).click
+        assert_text preview_txt
+        find('.btn', text: 'Next: choose inputs').click
+      end
+
+      # in the process page now
+      assert_text process_txt
+      assert_text project['name']
     end
   end
 end

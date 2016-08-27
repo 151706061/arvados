@@ -130,6 +130,7 @@ function maybe_load_more_content(event) {
                 $container.find(".spinner").detach();
                 $container.append(data.content);
                 $container.attr('data-infinite-content-href', data.next_page_href);
+                ping_all_scrollers();
             });
      }
 }
@@ -151,7 +152,8 @@ function mergeInfiniteContentParams($container) {
     // For example, filterable.js writes filters in
     // infiniteContentParamsFilterable ("search for text foo")
     // without worrying about clobbering the filters set up by the
-    // tab pane ("only show jobs and pipelines in this tab").
+    // tab pane ("only show container requests and pipeline instances
+    // in this tab").
     $.each($container.data(), function(datakey, datavalue) {
         // Note: We attach these data to DOM elements using
         // <element data-foo-bar="baz">. We store/retrieve them

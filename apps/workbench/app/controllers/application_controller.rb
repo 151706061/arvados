@@ -115,7 +115,7 @@ class ApplicationController < ActionController::Base
   # Column names should always be qualified by a table name and a direction is optional, defaulting to asc
   # (e.g. "collections.name" or "collections.name desc").
   # If a column name is specified, that table will be sorted by that column.
-  # If there are objects from different models that will be shown (such as in Jobs and Pipelines tab),
+  # If there are objects from different models that will be shown (such as in Pipelines and processes tab),
   # then a sort column name can optionally be specified for each model, passed as an comma-separated list (e.g. "jobs.script, pipeline_instances.name")
   # Currently only one sort column name and direction can be specified for each model.
   def load_filters_and_paging_params
@@ -239,6 +239,28 @@ class ApplicationController < ActionController::Base
     if next_page_offset
       url_for with_params.merge(offset: next_page_offset)
     end
+  end
+
+  helper_method :next_page_filters
+  def next_page_filters nextpage_operator
+    next_page_filters = @filters.reject do |attr, op, val|
+      (attr == 'created_at' and op == nextpage_operator) or
+      (attr == 'uuid' and op == 'not in')
+    end
+
+    if @objects.any?
+      last_created_at = @objects.last.created_at
+
+      last_uuids = []
+      @objects.each do |obj|
+        last_uuids << obj.uuid if obj.created_at.eql?(last_created_at)
+      end
+
+      next_page_filters += [['created_at', nextpage_operator, last_created_at]]
+      next_page_filters += [['uuid', 'not in', last_uuids]]
+    end
+
+    next_page_filters
   end
 
   def show
@@ -828,9 +850,18 @@ class ApplicationController < ActionController::Base
     pi
   end
 
-  helper_method :finished_pipelines
-  def finished_pipelines lim
-    PipelineInstance.limit(lim).order(["finished_at desc"]).filter([["state", "in", ["Complete", "Failed", "Paused"]], ["finished_at", "!=", nil]])
+  helper_method :recent_processes
+  def recent_processes lim
+    lim = 12 if lim.nil?
+
+    pipelines = PipelineInstance.limit(lim).order(["created_at desc"])
+
+    crs = ContainerRequest.limit(lim).order(["created_at desc"]).filter([["requesting_container_uuid", "=", nil]])
+    procs = {}
+    pipelines.results.each { |pi| procs[pi] = pi.created_at }
+    crs.results.each { |c| procs[c] = c.created_at }
+
+    Hash[procs.sort_by {|key, value| value}].keys.reverse.first(lim)
   end
 
   helper_method :recent_collections

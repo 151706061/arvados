@@ -43,13 +43,16 @@ navbar:
       - user/tutorials/tutorial-keep-mount.html.textile.liquid
       - user/topics/keep.html.textile.liquid
       - user/topics/arv-copy.html.textile.liquid
-    - Run a pipeline on the command line:
+    - Using Common Workflow Language:
+      - user/cwl/intro-cwl.html.textile.liquid
+      - user/cwl/cwl-runner.html.textile.liquid
+    - Working on the command line:
       - user/topics/running-pipeline-command-line.html.textile.liquid
       - user/topics/arv-run.html.textile.liquid
-    - Working with Arvados Repositories:
+    - Working with git repositories:
       - user/tutorials/add-new-repository.html.textile.liquid
       - user/tutorials/git-arvados-guide.html.textile.liquid
-    - Develop a new pipeline:
+    - Develop an Arvados pipeline:
       - user/tutorials/intro-crunch.html.textile.liquid
       - user/tutorials/running-external-program.html.textile.liquid
       - user/topics/crunch-tools-overview.html.textile.liquid
@@ -148,6 +151,7 @@ navbar:
       - install/arvbox.html.textile.liquid
     - Manual installation:
       - install/install-manual-prerequisites.html.textile.liquid
+      - install/install-postgresql.html.textile.liquid
       - install/install-sso.html.textile.liquid
       - install/install-api-server.html.textile.liquid
       - install/install-arv-git-httpd.html.textile.liquid
@@ -158,6 +162,12 @@ navbar:
       - install/configure-azure-blob-storage.html.textile.liquid
       - install/install-keepproxy.html.textile.liquid
       - install/install-keep-web.html.textile.liquid
+    - Install Crunch v2 on SLURM:
+      - install/crunch2-slurm/install-prerequisites.html.textile.liquid
+      - install/crunch2-slurm/install-compute-node.html.textile.liquid
+      - install/crunch2-slurm/install-dispatch.html.textile.liquid
+      - install/crunch2-slurm/install-test.html.textile.liquid
+    - Install Crunch v1:
       - install/install-crunch-dispatch.html.textile.liquid
       - install/install-compute-node.html.textile.liquid
     - Helpful hints:

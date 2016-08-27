@@ -4,6 +4,7 @@ from __future__ import print_function
 import argparse
 import atexit
 import errno
+import glob
 import httplib2
 import os
 import pipes
@@ -12,8 +13,8 @@ import re
 import shutil
 import signal
 import socket
-import subprocess
 import string
+import subprocess
 import sys
 import tempfile
 import time
@@ -192,7 +193,7 @@ def _fifo2stderr(label):
             raise
     os.mkfifo(fifo, 0700)
     subprocess.Popen(
-        ['sed', '-e', 's/^/['+label+'] /', fifo],
+        ['stdbuf', '-i0', '-oL', '-eL', 'sed', '-e', 's/^/['+label+'] /', fifo],
         stdout=sys.stderr)
     return fifo
 
@@ -213,8 +214,14 @@ def run(leave_running_atexit=False):
     """
     global my_api_host
 
-    # Delete cached discovery document.
-    shutil.rmtree(arvados.http_cache('discovery'))
+    # Delete cached discovery documents.
+    #
+    # This will clear cached docs that belong to other processes (like
+    # concurrent test suites) even if they're still running. They should
+    # be able to tolerate that.
+    for fn in glob.glob(os.path.join(arvados.http_cache('discovery'),
+                                     '*,arvados,v1,rest,*')):
+        os.unlink(fn)
 
     pid_file = _pidfile('api')
     pid_file_ok = find_server_pid(pid_file, 0)
@@ -469,7 +476,7 @@ def run_keep_proxy():
         'service_type': 'proxy',
         'service_ssl_flag': False,
     }}).execute()
-    os.environ["ARVADOS_KEEP_PROXY"] = "http://localhost:{}".format(port)
+    os.environ["ARVADOS_KEEP_SERVICES"] = "http://localhost:{}".format(port)
     _setport('keepproxy', port)
     _wait_until_port_listens(port)
 
@@ -657,7 +664,7 @@ class TestCaseWithServers(unittest.TestCase):
         cls._orig_environ = os.environ.copy()
         cls._orig_config = arvados.config.settings().copy()
         cls._cleanup_funcs = []
-        os.environ.pop('ARVADOS_KEEP_PROXY', None)
+        os.environ.pop('ARVADOS_KEEP_SERVICES', None)
         os.environ.pop('ARVADOS_EXTERNAL_CLIENT', None)
         for server_kwargs, start_func, stop_func in (
                 (cls.MAIN_SERVER, run, reset),

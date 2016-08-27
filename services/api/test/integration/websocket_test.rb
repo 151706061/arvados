@@ -23,15 +23,15 @@ class WebsocketTest < ActionDispatch::IntegrationTest
 
     EM.run {
       if token
-        ws = Faye::WebSocket::Client.new("ws://localhost:3002/websocket?api_token=#{api_client_authorizations(token).api_token}")
+        ws = Faye::WebSocket::Client.new("ws://localhost:#{WEBSOCKET_PORT}/websocket?api_token=#{api_client_authorizations(token).api_token}")
       else
-        ws = Faye::WebSocket::Client.new("ws://localhost:3002/websocket")
+        ws = Faye::WebSocket::Client.new("ws://localhost:#{WEBSOCKET_PORT}/websocket")
       end
 
       ws.on :open do |event|
         opened = true
         if timeout
-          EM::Timer.new 4 do
+          EM::Timer.new 8 do
             too_long = true if close_status.nil?
             EM.stop_event_loop
           end
@@ -56,7 +56,7 @@ class WebsocketTest < ActionDispatch::IntegrationTest
 
     ws_helper do |ws|
       ws.on :message do |event|
-        d = Oj.load event.data
+        d = Oj.strict_load event.data
         status = d["status"]
         ws.close
       end
@@ -75,7 +75,7 @@ class WebsocketTest < ActionDispatch::IntegrationTest
       end
 
       ws.on :message do |event|
-        d = Oj.load event.data
+        d = Oj.strict_load event.data
         status = d["status"]
         ws.close
       end
@@ -97,7 +97,7 @@ class WebsocketTest < ActionDispatch::IntegrationTest
       end
 
       ws.on :message do |event|
-        d = Oj.load event.data
+        d = Oj.strict_load event.data
         case state
         when 1
           assert_equal 200, d["status"]
@@ -134,7 +134,7 @@ class WebsocketTest < ActionDispatch::IntegrationTest
       end
 
       ws.on :message do |event|
-        d = Oj.load event.data
+        d = Oj.strict_load event.data
         case state
         when 1
           assert_equal 200, d["status"]
@@ -174,7 +174,7 @@ class WebsocketTest < ActionDispatch::IntegrationTest
       end
 
       ws.on :message do |event|
-        d = Oj.load event.data
+        d = Oj.strict_load event.data
         case state
         when 1
           assert_equal 200, d["status"]
@@ -213,7 +213,7 @@ class WebsocketTest < ActionDispatch::IntegrationTest
       end
 
       ws.on :message do |event|
-        d = Oj.load event.data
+        d = Oj.strict_load event.data
         case state
         when 1
           assert_equal 200, d["status"]
@@ -257,7 +257,7 @@ class WebsocketTest < ActionDispatch::IntegrationTest
       end
 
       ws.on :message do |event|
-        d = Oj.load event.data
+        d = Oj.strict_load event.data
         case state
         when 1
           assert_equal 200, d["status"]
@@ -297,7 +297,7 @@ class WebsocketTest < ActionDispatch::IntegrationTest
       end
 
       ws.on :message do |event|
-        d = Oj.load event.data
+        d = Oj.strict_load event.data
         case state
         when 1
           assert_equal 200, d["status"]
@@ -323,6 +323,7 @@ class WebsocketTest < ActionDispatch::IntegrationTest
   end
 
   test "connect, subscribe, get event, unsubscribe" do
+    slow_test
     state = 1
     spec = nil
     spec_ev_uuid = nil
@@ -342,7 +343,7 @@ class WebsocketTest < ActionDispatch::IntegrationTest
       end
 
       ws.on :message do |event|
-        d = Oj.load event.data
+        d = Oj.strict_load event.data
         case state
         when 1
           assert_equal 200, d["status"]
@@ -372,6 +373,7 @@ class WebsocketTest < ActionDispatch::IntegrationTest
   end
 
   test "connect, subscribe, get event, unsubscribe with filter" do
+    slow_test
     state = 1
     spec = nil
     spec_ev_uuid = nil
@@ -381,7 +383,7 @@ class WebsocketTest < ActionDispatch::IntegrationTest
     ws_helper :admin, false do |ws|
       ws.on :open do |event|
         ws.send ({method: 'subscribe', filters: [['object_uuid', 'is_a', 'arvados#human']]}.to_json)
-        EM::Timer.new 3 do
+        EM::Timer.new 6 do
           # Set a time limit on the test because after unsubscribing the server
           # still has to process the next event (and then hopefully correctly
           # decides not to send it because we unsubscribed.)
@@ -390,7 +392,7 @@ class WebsocketTest < ActionDispatch::IntegrationTest
       end
 
       ws.on :message do |event|
-        d = Oj.load event.data
+        d = Oj.strict_load event.data
         case state
         when 1
           assert_equal 200, d["status"]
@@ -421,6 +423,7 @@ class WebsocketTest < ActionDispatch::IntegrationTest
 
 
   test "connect, subscribe, get event, try to unsubscribe with bogus filter" do
+    slow_test
     state = 1
     spec = nil
     spec_ev_uuid = nil
@@ -435,7 +438,7 @@ class WebsocketTest < ActionDispatch::IntegrationTest
       end
 
       ws.on :message do |event|
-        d = Oj.load event.data
+        d = Oj.strict_load event.data
         case state
         when 1
           assert_equal 200, d["status"]
@@ -473,6 +476,7 @@ class WebsocketTest < ActionDispatch::IntegrationTest
 
 
   test "connected, not subscribed, no event" do
+    slow_test
     authorize_with :admin
 
     ws_helper :admin, false do |ws|
@@ -493,6 +497,7 @@ class WebsocketTest < ActionDispatch::IntegrationTest
   end
 
   test "connected, not authorized to see event" do
+    slow_test
     state = 1
 
     authorize_with :admin
@@ -507,7 +512,7 @@ class WebsocketTest < ActionDispatch::IntegrationTest
       end
 
       ws.on :message do |event|
-        d = Oj.load event.data
+        d = Oj.strict_load event.data
         case state
         when 1
           assert_equal 200, d["status"]
@@ -531,7 +536,7 @@ class WebsocketTest < ActionDispatch::IntegrationTest
       end
 
       ws.on :message do |event|
-        d = Oj.load event.data
+        d = Oj.strict_load event.data
         status = d["status"]
         ws.close
       end
@@ -549,7 +554,7 @@ class WebsocketTest < ActionDispatch::IntegrationTest
       end
 
       ws.on :message do |event|
-        d = Oj.load event.data
+        d = Oj.strict_load event.data
         status = d["status"]
         ws.close
       end
@@ -567,7 +572,7 @@ class WebsocketTest < ActionDispatch::IntegrationTest
       end
 
       ws.on :message do |event|
-        d = Oj.load event.data
+        d = Oj.strict_load event.data
         status = d["status"]
         ws.close
       end
@@ -590,12 +595,12 @@ class WebsocketTest < ActionDispatch::IntegrationTest
       end
 
       ws.on :message do |event|
-        d = Oj.load event.data
+        d = Oj.strict_load event.data
         case state
-        when (1..EventBus::MAX_FILTERS)
+        when (1..Rails.configuration.websocket_max_filters)
           assert_equal 200, d["status"]
           state += 1
-        when (EventBus::MAX_FILTERS+1)
+        when (Rails.configuration.websocket_max_filters+1)
           assert_equal 403, d["status"]
           ws.close
         end
@@ -603,11 +608,12 @@ class WebsocketTest < ActionDispatch::IntegrationTest
 
     end
 
-    assert_equal 17, state
+    assert_equal Rails.configuration.websocket_max_filters+1, state
 
   end
 
   test "connect, subscribe, lots of events" do
+    slow_test
     state = 1
     event_count = 0
     log_start = Log.order(:id).last.id
@@ -625,7 +631,7 @@ class WebsocketTest < ActionDispatch::IntegrationTest
       end
 
       ws.on :message do |event|
-        d = Oj.load event.data
+        d = Oj.strict_load event.data
         case state
         when 1
           assert_equal 200, d["status"]
@@ -664,7 +670,7 @@ class WebsocketTest < ActionDispatch::IntegrationTest
       end
 
       ws.on :message do |event|
-        d = Oj.load event.data
+        d = Oj.strict_load event.data
         case state
         when 1
           assert_equal 200, d["status"]

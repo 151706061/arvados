@@ -29,9 +29,14 @@ setup(name='arvados-cwl-runner',
           'bin/cwl-runner',
           'bin/arvados-cwl-runner'
       ],
+      # Make sure to update arvados/build/run-build-packages.sh as well
+      # when updating the cwltool version pin.
       install_requires=[
-          'cwltool>=1.0.20160311170456',
-          'arvados-python-client>=0.1.20160219154918'
+          'cwltool==1.0.20160811184335',
+          'arvados-python-client>=0.1.20160714204738',
+      ],
+      data_files=[
+          ('share/doc/arvados-cwl-runner', ['LICENSE-2.0.txt', 'README.rst']),
       ],
       test_suite='tests',
       tests_require=['mock>=1.0'],

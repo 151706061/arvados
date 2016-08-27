@@ -1,18 +1,38 @@
 package main
 
+// Dispatcher service for Crunch that submits containers to the slurm queue.
+
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
+	"git.curoverse.com/arvados.git/sdk/go/arvados"
 	"git.curoverse.com/arvados.git/sdk/go/arvadosclient"
+	"git.curoverse.com/arvados.git/sdk/go/dispatch"
+	"github.com/coreos/go-systemd/daemon"
+	"io"
 	"io/ioutil"
 	"log"
+	"math"
 	"os"
 	"os/exec"
-	"os/signal"
-	"sync"
-	"syscall"
+	"strings"
 	"time"
 )
+
+// Config used by crunch-dispatch-slurm
+type Config struct {
+	Client arvados.Client
+
+	SbatchArguments []string
+	PollPeriod      arvados.Duration
+
+	// crunch-run command to invoke. The container UUID will be
+	// appended. If nil, []string{"crunch-run"} will be used.
+	//
+	// Example: []string{"crunch-run", "--cgroup-parent-subsystem=memory"}
+	CrunchRunCommand []string
+}
 
 func main() {
 	err := doMain()
@@ -22,155 +42,126 @@ func main() {
 }
 
 var (
-	arv              arvadosclient.ArvadosClient
-	runningCmds      map[string]*exec.Cmd
-	runningCmdsMutex sync.Mutex
-	waitGroup        sync.WaitGroup
-	doneProcessing   chan bool
-	sigChan          chan os.Signal
+	config        Config
+	squeueUpdater Squeue
 )
+
+const defaultConfigPath = "/etc/arvados/crunch-dispatch-slurm/config.json"
 
 func doMain() error {
 	flags := flag.NewFlagSet("crunch-dispatch-slurm", flag.ExitOnError)
+	flags.Usage = func() { usage(flags) }
 
-	pollInterval := flags.Int(
-		"poll-interval",
-		10,
-		"Interval in seconds to poll for queued containers")
-
-	priorityPollInterval := flags.Int(
-		"container-priority-poll-interval",
-		60,
-		"Interval in seconds to check priority of a dispatched container")
-
-	crunchRunCommand := flags.String(
-		"crunch-run-command",
-		"/usr/bin/crunch-run",
-		"Crunch command to run container")
-
-	finishCommand := flags.String(
-		"finish-command",
-		"/usr/bin/crunch-finish-slurm.sh",
-		"Command to run from strigger when job is finished")
+	configPath := flags.String(
+		"config",
+		defaultConfigPath,
+		"`path` to json configuration file")
 
 	// Parse args; omit the first arg which is the command name
 	flags.Parse(os.Args[1:])
 
-	var err error
-	arv, err = arvadosclient.MakeArvadosClient()
+	err := readConfig(&config, *configPath)
+	if err != nil {
+		log.Printf("Error reading configuration: %v", err)
+		return err
+	}
+
+	if config.CrunchRunCommand == nil {
+		config.CrunchRunCommand = []string{"crunch-run"}
+	}
+
+	if config.PollPeriod == 0 {
+		config.PollPeriod = arvados.Duration(10 * time.Second)
+	}
+
+	if config.Client.APIHost != "" || config.Client.AuthToken != "" {
+		// Copy real configs into env vars so [a]
+		// MakeArvadosClient() uses them, and [b] they get
+		// propagated to crunch-run via SLURM.
+		os.Setenv("ARVADOS_API_HOST", config.Client.APIHost)
+		os.Setenv("ARVADOS_API_TOKEN", config.Client.AuthToken)
+		os.Setenv("ARVADOS_API_INSECURE", "")
+		if config.Client.Insecure {
+			os.Setenv("ARVADOS_API_INSECURE", "1")
+		}
+		os.Setenv("ARVADOS_KEEP_SERVICES", "")
+		os.Setenv("ARVADOS_EXTERNAL_CLIENT", "")
+	} else {
+		log.Printf("warning: Client credentials missing from config, so falling back on environment variables (deprecated).")
+	}
+
+	arv, err := arvadosclient.MakeArvadosClient()
+	if err != nil {
+		log.Printf("Error making Arvados client: %v", err)
+		return err
+	}
+	arv.Retries = 25
+
+	squeueUpdater.StartMonitor(time.Duration(config.PollPeriod))
+	defer squeueUpdater.Done()
+
+	dispatcher := dispatch.Dispatcher{
+		Arv:            arv,
+		RunContainer:   run,
+		PollInterval:   time.Duration(config.PollPeriod),
+		DoneProcessing: make(chan struct{})}
+
+	if _, err := daemon.SdNotify("READY=1"); err != nil {
+		log.Printf("Error notifying init daemon: %v", err)
+	}
+
+	err = dispatcher.RunDispatcher()
 	if err != nil {
 		return err
 	}
 
-	// Channel to terminate
-	doneProcessing = make(chan bool)
-
-	// Graceful shutdown
-	sigChan = make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT)
-	go func(sig <-chan os.Signal) {
-		for sig := range sig {
-			log.Printf("Caught signal: %v", sig)
-			doneProcessing <- true
-		}
-	}(sigChan)
-
-	// Run all queued containers
-	runQueuedContainers(*pollInterval, *priorityPollInterval, *crunchRunCommand, *finishCommand)
-
-	// Wait for all running crunch jobs to complete / terminate
-	waitGroup.Wait()
-
 	return nil
 }
 
-// Poll for queued containers using pollInterval.
-// Invoke dispatchSlurm for each ticker cycle, which will run all the queued containers.
-//
-// Any errors encountered are logged but the program would continue to run (not exit).
-// This is because, once one or more crunch jobs are running,
-// we would need to wait for them complete.
-func runQueuedContainers(pollInterval, priorityPollInterval int, crunchRunCommand, finishCommand string) {
-	ticker := time.NewTicker(time.Duration(pollInterval) * time.Second)
-
-	for {
-		select {
-		case <-ticker.C:
-			dispatchSlurm(priorityPollInterval, crunchRunCommand, finishCommand)
-		case <-doneProcessing:
-			ticker.Stop()
-			return
-		}
-	}
-}
-
-// Container data
-type Container struct {
-	UUID     string `json:"uuid"`
-	State    string `json:"state"`
-	Priority int    `json:"priority"`
-}
-
-// ContainerList is a list of the containers from api
-type ContainerList struct {
-	Items []Container `json:"items"`
-}
-
-// Get the list of queued containers from API server and invoke run for each container.
-func dispatchSlurm(priorityPollInterval int, crunchRunCommand, finishCommand string) {
-	params := arvadosclient.Dict{
-		"filters": [][]string{[]string{"state", "=", "Queued"}},
-	}
-
-	var containers ContainerList
-	err := arv.List("containers", params, &containers)
-	if err != nil {
-		log.Printf("Error getting list of queued containers: %q", err)
-		return
-	}
-
-	for i := 0; i < len(containers.Items); i++ {
-		log.Printf("About to submit queued container %v", containers.Items[i].UUID)
-		// Run the container
-		go run(containers.Items[i], crunchRunCommand, finishCommand, priorityPollInterval)
-	}
-}
-
 // sbatchCmd
-func sbatchFunc(uuid string) *exec.Cmd {
-	return exec.Command("sbatch", "--job-name="+uuid, "--share", "--parsable")
+func sbatchFunc(container arvados.Container) *exec.Cmd {
+	memPerCPU := math.Ceil(float64(container.RuntimeConstraints.RAM) / (float64(container.RuntimeConstraints.VCPUs) * 1048576))
+
+	var sbatchArgs []string
+	sbatchArgs = append(sbatchArgs, "--share")
+	sbatchArgs = append(sbatchArgs, config.SbatchArguments...)
+	sbatchArgs = append(sbatchArgs, fmt.Sprintf("--job-name=%s", container.UUID))
+	sbatchArgs = append(sbatchArgs, fmt.Sprintf("--mem-per-cpu=%d", int(memPerCPU)))
+	sbatchArgs = append(sbatchArgs, fmt.Sprintf("--cpus-per-task=%d", container.RuntimeConstraints.VCPUs))
+
+	return exec.Command("sbatch", sbatchArgs...)
 }
 
+// scancelCmd
+func scancelFunc(container arvados.Container) *exec.Cmd {
+	return exec.Command("scancel", "--name="+container.UUID)
+}
+
+// Wrap these so that they can be overridden by tests
 var sbatchCmd = sbatchFunc
-
-// striggerCmd
-func striggerFunc(jobid, containerUUID, finishCommand, apiHost, apiToken, apiInsecure string) *exec.Cmd {
-	return exec.Command("strigger", "--set", "--jobid="+jobid, "--fini",
-		fmt.Sprintf("--program=%s %s %s %s %s", finishCommand, apiHost, apiToken, apiInsecure, containerUUID))
-}
-
-var striggerCmd = striggerFunc
+var scancelCmd = scancelFunc
 
 // Submit job to slurm using sbatch.
-func submit(container Container, crunchRunCommand string) (jobid string, submitErr error) {
-	submitErr = nil
-
-	// Mark record as complete if anything errors out.
+func submit(dispatcher *dispatch.Dispatcher,
+	container arvados.Container, crunchRunCommand []string) (submitErr error) {
 	defer func() {
-		if submitErr != nil {
-			// This really should be an "Error" state, see #8018
-			updateErr := arv.Update("containers", container.UUID,
-				arvadosclient.Dict{
-					"container": arvadosclient.Dict{"state": "Complete"}},
-				nil)
-			if updateErr != nil {
-				log.Printf("Error updating container state to 'Complete' for %v: %q", container.UUID, updateErr)
-			}
+		// If we didn't get as far as submitting a slurm job,
+		// unlock the container and return it to the queue.
+		if submitErr == nil {
+			// OK, no cleanup needed
+			return
+		}
+		err := dispatcher.Arv.Update("containers", container.UUID,
+			arvadosclient.Dict{
+				"container": arvadosclient.Dict{"state": "Queued"}},
+			nil)
+		if err != nil {
+			log.Printf("Error unlocking container %s: %v", container.UUID, err)
 		}
 	}()
 
 	// Create the command and attach to stdin/stdout
-	cmd := sbatchCmd(container.UUID)
+	cmd := sbatchCmd(container)
 	stdinWriter, stdinerr := cmd.StdinPipe()
 	if stdinerr != nil {
 		submitErr = fmt.Errorf("Error creating stdin pipe %v: %q", container.UUID, stdinerr)
@@ -189,6 +180,10 @@ func submit(container Container, crunchRunCommand string) (jobid string, submitE
 		return
 	}
 
+	// Mutex between squeue sync and running sbatch or scancel.
+	squeueUpdater.SlurmLock.Lock()
+	defer squeueUpdater.SlurmLock.Unlock()
+
 	err := cmd.Start()
 	if err != nil {
 		submitErr = fmt.Errorf("Error starting %v: %v", cmd.Args, err)
@@ -198,20 +193,20 @@ func submit(container Container, crunchRunCommand string) (jobid string, submitE
 	stdoutChan := make(chan []byte)
 	go func() {
 		b, _ := ioutil.ReadAll(stdoutReader)
+		stdoutReader.Close()
 		stdoutChan <- b
-		close(stdoutChan)
 	}()
 
 	stderrChan := make(chan []byte)
 	go func() {
 		b, _ := ioutil.ReadAll(stderrReader)
+		stderrReader.Close()
 		stderrChan <- b
-		close(stderrChan)
 	}()
 
 	// Send a tiny script on stdin to execute the crunch-run command
 	// slurm actually enforces that this must be a #! script
-	fmt.Fprintf(stdinWriter, "#!/bin/sh\nexec '%s' '%s'\n", crunchRunCommand, container.UUID)
+	io.WriteString(stdinWriter, execScript(append(crunchRunCommand, container.UUID)))
 	stdinWriter.Close()
 
 	err = cmd.Wait()
@@ -219,82 +214,125 @@ func submit(container Container, crunchRunCommand string) (jobid string, submitE
 	stdoutMsg := <-stdoutChan
 	stderrmsg := <-stderrChan
 
+	close(stdoutChan)
+	close(stderrChan)
+
 	if err != nil {
-		submitErr = fmt.Errorf("Container submission failed %v: %v %v", cmd.Args, err, stderrmsg)
+		submitErr = fmt.Errorf("Container submission failed: %v: %v (stderr: %q)", cmd.Args, err, stderrmsg)
 		return
 	}
 
-	// If everything worked out, got the jobid on stdout
-	jobid = string(stdoutMsg)
-
+	log.Printf("sbatch succeeded: %s", strings.TrimSpace(string(stdoutMsg)))
 	return
 }
 
-// finalizeRecordOnFinish uses 'strigger' command to register a script that will run on
-// the slurm controller when the job finishes.
-func finalizeRecordOnFinish(jobid, containerUUID, finishCommand, apiHost, apiToken, apiInsecure string) {
-	cmd := striggerCmd(jobid, containerUUID, finishCommand, apiHost, apiToken, apiInsecure)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	err := cmd.Run()
-	if err != nil {
-		log.Printf("While setting up strigger: %v", err)
+// If the container is marked as Locked, check if it is already in the slurm
+// queue.  If not, submit it.
+//
+// If the container is marked as Running, check if it is in the slurm queue.
+// If not, mark it as Cancelled.
+func monitorSubmitOrCancel(dispatcher *dispatch.Dispatcher, container arvados.Container, monitorDone *bool) {
+	submitted := false
+	for !*monitorDone {
+		if squeueUpdater.CheckSqueue(container.UUID) {
+			// Found in the queue, so continue monitoring
+			submitted = true
+		} else if container.State == dispatch.Locked && !submitted {
+			// Not in queue but in Locked state and we haven't
+			// submitted it yet, so submit it.
+
+			log.Printf("About to submit queued container %v", container.UUID)
+
+			if err := submit(dispatcher, container, config.CrunchRunCommand); err != nil {
+				log.Printf("Error submitting container %s to slurm: %v",
+					container.UUID, err)
+				// maybe sbatch is broken, put it back to queued
+				dispatcher.UpdateState(container.UUID, dispatch.Queued)
+			}
+			submitted = true
+		} else {
+			// Not in queue and we are not going to submit it.
+			// Refresh the container state. If it is
+			// Complete/Cancelled, do nothing, if it is Locked then
+			// release it back to the Queue, if it is Running then
+			// clean up the record.
+
+			var con arvados.Container
+			err := dispatcher.Arv.Get("containers", container.UUID, nil, &con)
+			if err != nil {
+				log.Printf("Error getting final container state: %v", err)
+			}
+
+			var st arvados.ContainerState
+			switch con.State {
+			case dispatch.Locked:
+				st = dispatch.Queued
+			case dispatch.Running:
+				st = dispatch.Cancelled
+			default:
+				// Container state is Queued, Complete or Cancelled so stop monitoring it.
+				return
+			}
+
+			log.Printf("Container %s in state %v but missing from slurm queue, changing to %v.",
+				container.UUID, con.State, st)
+			dispatcher.UpdateState(container.UUID, st)
+		}
 	}
 }
 
-// Run a queued container.
-// Set container state to locked (TBD)
-// Submit job to slurm to execute crunch-run command for the container
-// If the container priority becomes zero while crunch job is still running, cancel the job.
-func run(container Container, crunchRunCommand, finishCommand string, priorityPollInterval int) {
+// Run or monitor a container.
+//
+// Monitor status updates.  If the priority changes to zero, cancel the
+// container using scancel.
+func run(dispatcher *dispatch.Dispatcher,
+	container arvados.Container,
+	status chan arvados.Container) {
 
-	jobid, err := submit(container, crunchRunCommand)
-	if err != nil {
-		log.Printf("Error queuing container run: %v", err)
-		return
-	}
+	log.Printf("Monitoring container %v started", container.UUID)
+	defer log.Printf("Monitoring container %v finished", container.UUID)
 
-	insecure := "0"
-	if arv.ApiInsecure {
-		insecure = "1"
-	}
-	finalizeRecordOnFinish(jobid, container.UUID, finishCommand, arv.ApiServer, arv.ApiToken, insecure)
+	monitorDone := false
+	go monitorSubmitOrCancel(dispatcher, container, &monitorDone)
 
-	// Update container status to Running, this is a temporary workaround
-	// to avoid resubmitting queued containers because record locking isn't
-	// implemented yet.
-	err = arv.Update("containers", container.UUID,
-		arvadosclient.Dict{
-			"container": arvadosclient.Dict{"state": "Running"}},
-		nil)
-	if err != nil {
-		log.Printf("Error updating container state to 'Running' for %v: %q", container.UUID, err)
-	}
+	for container = range status {
+		if container.State == dispatch.Locked || container.State == dispatch.Running {
+			if container.Priority == 0 {
+				log.Printf("Canceling container %s", container.UUID)
 
-	log.Printf("Submitted container run for %v", container.UUID)
+				// Mutex between squeue sync and running sbatch or scancel.
+				squeueUpdater.SlurmLock.Lock()
+				err := scancelCmd(container).Run()
+				squeueUpdater.SlurmLock.Unlock()
 
-	containerUUID := container.UUID
-
-	// A goroutine to terminate the runner if container priority becomes zero
-	priorityTicker := time.NewTicker(time.Duration(priorityPollInterval) * time.Second)
-	go func() {
-		for _ = range priorityTicker.C {
-			var container Container
-			err := arv.Get("containers", containerUUID, nil, &container)
-			if err != nil {
-				log.Printf("Error getting container info for %v: %q", container.UUID, err)
-			} else {
-				if container.Priority == 0 {
-					log.Printf("Canceling container %v", container.UUID)
-					priorityTicker.Stop()
-					cancelcmd := exec.Command("scancel", "--name="+container.UUID)
-					cancelcmd.Run()
+				if err != nil {
+					log.Printf("Error stopping container %s with scancel: %v",
+						container.UUID, err)
+					if squeueUpdater.CheckSqueue(container.UUID) {
+						log.Printf("Container %s is still in squeue after scancel.",
+							container.UUID)
+						continue
+					}
 				}
-				if container.State == "Complete" {
-					priorityTicker.Stop()
-				}
+
+				err = dispatcher.UpdateState(container.UUID, dispatch.Cancelled)
 			}
 		}
-	}()
+	}
+	monitorDone = true
+}
 
+func readConfig(dst interface{}, path string) error {
+	if buf, err := ioutil.ReadFile(path); err != nil && os.IsNotExist(err) {
+		if path == defaultConfigPath {
+			log.Printf("Config not specified. Continue with default configuration.")
+		} else {
+			return fmt.Errorf("Config file not found %q: %v", path, err)
+		}
+	} else if err != nil {
+		return fmt.Errorf("Error reading config %q: %v", path, err)
+	} else if err = json.Unmarshal(buf, dst); err != nil {
+		return fmt.Errorf("Error decoding config %q: %v", path, err)
+	}
+	return nil
 }

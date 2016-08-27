@@ -63,8 +63,8 @@ class ProjectsController < ApplicationController
       }
     pane_list <<
       {
-        :name => 'Jobs_and_pipelines',
-        :filters => [%w(uuid is_a) + [%w(arvados#job arvados#pipelineInstance)]]
+        :name => 'Pipelines_and_processes',
+        :filters => [%w(uuid is_a) + [%w(arvados#containerRequest arvados#pipelineInstance)]]
       }
     pane_list <<
       {
@@ -213,9 +213,13 @@ class ProjectsController < ApplicationController
       @name_link_for = {}
       kind_filters.each do |attr,op,val|
         (val.is_a?(Array) ? val : [val]).each do |type|
+          filters = @filters - kind_filters + [['uuid', 'is_a', type]]
+          if type == 'arvados#containerRequest'
+            filters = filters + [['container_requests.requesting_container_uuid', '=', nil]]
+          end
           objects = @object.contents(order: @order,
                                      limit: @limit,
-                                     filters: (@filters - kind_filters + [['uuid', 'is_a', type]]),
+                                     filters: filters,
                                     )
           objects.each do |object|
             @name_link_for[object.andand.uuid] = objects.links_for(object, 'name').first
@@ -226,23 +230,9 @@ class ProjectsController < ApplicationController
       @objects = @objects.to_a.sort_by(&:created_at)
       @objects.reverse! if nextpage_operator == '<='
       @objects = @objects[0..@limit-1]
-      @next_page_filters = @filters.reject do |attr,op,val|
-        (attr == 'created_at' and op == nextpage_operator) or
-          (attr == 'uuid' and op == 'not in')
-      end
 
       if @objects.any?
-        last_created_at = @objects.last.created_at
-
-        last_uuids = []
-        @objects.each do |obj|
-          last_uuids << obj.uuid if obj.created_at.eql?(last_created_at)
-        end
-
-        @next_page_filters += [['created_at',
-                                nextpage_operator,
-                                last_created_at]]
-        @next_page_filters += [['uuid', 'not in', last_uuids]]
+        @next_page_filters = next_page_filters(nextpage_operator)
         @next_page_href = url_for(partial: :contents_rows,
                                   limit: @limit,
                                   filters: @next_page_filters.to_json)

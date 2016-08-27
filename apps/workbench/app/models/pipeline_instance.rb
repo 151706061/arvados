@@ -13,7 +13,7 @@ class PipelineInstance < ArvadosBase
       template = if lookup and lookup[self.pipeline_template_uuid]
                    lookup[self.pipeline_template_uuid]
                  else
-                   PipelineTemplate.where(uuid: self.pipeline_template_uuid).first
+                   PipelineTemplate.find(self.pipeline_template_uuid) if self.pipeline_template_uuid
                  end
       if template
         template.name
@@ -130,6 +130,10 @@ class PipelineInstance < ArvadosBase
     else
       stderr_log_query(1).results.any?
     end
+  end
+
+  def work_unit(label=nil)
+    PipelineInstanceWorkUnit.new(self, label || self.name)
   end
 
   private

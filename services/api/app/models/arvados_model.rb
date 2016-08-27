@@ -104,10 +104,27 @@ class ArvadosModel < ActiveRecord::Base
     api_column_map
   end
 
+  def self.ignored_select_attributes
+    ["href", "kind", "etag"]
+  end
+
   def self.columns_for_attributes(select_attributes)
+    if select_attributes.empty?
+      raise ArgumentError.new("Attribute selection list cannot be empty")
+    end
+    api_column_map = attributes_required_columns
+    invalid_attrs = []
+    select_attributes.each do |s|
+      next if ignored_select_attributes.include? s
+      if not s.is_a? String or not api_column_map.include? s
+        invalid_attrs << s
+      end
+    end
+    if not invalid_attrs.empty?
+      raise ArgumentError.new("Invalid attribute(s): #{invalid_attrs.inspect}")
+    end
     # Given an array of attribute names to select, return an array of column
     # names that must be fetched from the database to satisfy the request.
-    api_column_map = attributes_required_columns
     select_attributes.flat_map { |attr| api_column_map[attr] }.uniq
   end
 
@@ -226,7 +243,7 @@ class ArvadosModel < ActiveRecord::Base
   end
 
   def logged_attributes
-    attributes
+    attributes.except *Rails.configuration.unlogged_attributes
   end
 
   def self.full_text_searchable_columns
@@ -391,15 +408,16 @@ class ArvadosModel < ActiveRecord::Base
       x.each do |k,v|
         return true if has_symbols?(k) or has_symbols?(v)
       end
-      false
     elsif x.is_a? Array
       x.each do |k|
         return true if has_symbols?(k)
       end
-      false
-    else
-      (x.class == Symbol)
+    elsif x.is_a? Symbol
+      return true
+    elsif x.is_a? String
+      return true if x.start_with?(':') && !x.start_with?('::')
     end
+    false
   end
 
   def self.recursive_stringify x
@@ -413,6 +431,8 @@ class ArvadosModel < ActiveRecord::Base
       end
     elsif x.is_a? Symbol
       x.to_s
+    elsif x.is_a? String and x.start_with?(':') and !x.start_with?('::')
+      x[1..-1]
     else
       x
     end

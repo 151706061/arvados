@@ -2,6 +2,7 @@ class Job < ArvadosModel
   include HasUuid
   include KindAndEtag
   include CommonApiTemplate
+  serialize :components, Hash
   attr_protected :arvados_sdk_version, :docker_image_locator
   serialize :script_parameters, Hash
   serialize :runtime_constraints, Hash
@@ -10,6 +11,7 @@ class Job < ArvadosModel
   after_commit :trigger_crunch_dispatch_if_cancelled, :on => :update
   before_validation :set_priority
   before_validation :update_state_from_old_state_attrs
+  before_validation :update_script_parameters_digest
   validate :ensure_script_version_is_commit
   validate :find_docker_image_locator
   validate :find_arvados_sdk_version
@@ -52,6 +54,7 @@ class Job < ArvadosModel
     t.add :queue_position
     t.add :node_uuids
     t.add :description
+    t.add :components
   end
 
   # Supported states for a job
@@ -78,12 +81,13 @@ class Job < ArvadosModel
   end
 
   def queue_position
-    Job::queue.each_with_index do |job, index|
-      if job[:uuid] == self.uuid
-        return index
-      end
-    end
-    nil
+    # We used to report this accurately, but the implementation made queue
+    # API requests O(n**2) for the size of the queue.  See #8800.
+    # We've soft-disabled it because it's not clear we even want this
+    # functionality: now that we have Node Manager with support for multiple
+    # node sizes, "queue position" tells you very little about when a job will
+    # run.
+    state == Queued ? 0 : nil
   end
 
   def self.running
@@ -92,8 +96,7 @@ class Job < ArvadosModel
   end
 
   def lock locked_by_uuid
-    transaction do
-      self.reload
+    with_lock do
       unless self.state == Queued and self.is_locked_by_uuid.nil?
         raise AlreadyLockedError
       end
@@ -103,7 +106,26 @@ class Job < ArvadosModel
     end
   end
 
+  def update_script_parameters_digest
+    self.script_parameters_digest = self.class.sorted_hash_digest(script_parameters)
+  end
+
+  def self.searchable_columns operator
+    super - ["script_parameters_digest"]
+  end
+
   protected
+
+  def self.sorted_hash_digest h
+    Digest::MD5.hexdigest(Oj.dump(deep_sort_hash(h)))
+  end
+
+  def self.deep_sort_hash h
+    return h unless h.is_a? Hash
+    h.sort.collect do |k, v|
+      [k, deep_sort_hash(v)]
+    end.to_h
+  end
 
   def foreign_key_attributes
     super + %w(output log)
@@ -238,7 +260,8 @@ class Job < ArvadosModel
           output_changed? or
           log_changed? or
           tasks_summary_changed? or
-          state_changed?
+          state_changed? or
+          components_changed?
         logger.warn "User #{current_user.uuid if current_user} tried to change protected job attributes on locked #{self.class.to_s} #{uuid_was}"
         return false
       end

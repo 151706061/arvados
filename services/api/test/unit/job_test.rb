@@ -316,7 +316,6 @@ class JobTest < ActiveSupport::TestCase
 
     assert_not_nil job1.queue_position, "Expected non-nil queue position for job1"
     assert_not_nil job2.queue_position, "Expected non-nil queue position for job2"
-    assert_not_equal job1.queue_position, job2.queue_position
   end
 
   SDK_MASTER = "ca68b24e51992e790f29df5cc4bc54ce1da4a1c2"
@@ -440,5 +439,21 @@ class JobTest < ActiveSupport::TestCase
     j.update_attributes repository: 'active/foo', script_version: 'master'
     assert_equal('077ba2ad3ea24a929091a9e6ce545c93199b8e57',
                  internal_tag(j.uuid))
+  end
+
+  test 'script_parameters_digest is independent of key order' do
+    j1 = Job.new(job_attrs(script_parameters: {'a' => 'a', 'ddee' => {'d' => 'd', 'e' => 'e'}}))
+    j2 = Job.new(job_attrs(script_parameters: {'ddee' => {'e' => 'e', 'd' => 'd'}, 'a' => 'a'}))
+    assert j1.valid?
+    assert j2.valid?
+    assert_equal(j1.script_parameters_digest, j2.script_parameters_digest)
+  end
+
+  test 'job fixtures have correct script_parameters_digest' do
+    Job.all.each do |j|
+      d = j.script_parameters_digest
+      assert_equal(j.update_script_parameters_digest, d,
+                   "wrong script_parameters_digest for #{j.uuid}")
+    end
   end
 end

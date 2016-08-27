@@ -387,14 +387,26 @@ class ProjectsControllerTest < ActionController::TestCase
   end
 
   [
-    ["jobs", "/jobs"],
-    ["pipelines", "/pipeline_instances"],
-    ["collections", "/collections"],
-  ].each do |target,path|
-    test "test dashboard button all #{target}" do
-      get :index, {}, session_for(:active)
-      assert_includes @response.body, "href=\"#{path}\""
-      assert_includes @response.body, "All #{target}"
+    [:admin, true],
+    [:active, false],
+  ].each do |user, expect_all_nodes|
+    test "in dashboard other index page links as #{user}" do
+      get :index, {}, session_for(user)
+
+      [["processes", "/all_processes"],
+       ["collections", "/collections"],
+      ].each do |target, path|
+        assert_includes @response.body, "href=\"#{path}\""
+        assert_includes @response.body, "All #{target}"
+      end
+
+      if expect_all_nodes
+        assert_includes @response.body, "href=\"/nodes\""
+        assert_includes @response.body, "All nodes"
+      else
+        assert_not_includes @response.body, "href=\"/nodes\""
+        assert_not_includes @response.body, "All nodes"
+      end
     end
   end
 
@@ -421,7 +433,7 @@ class ProjectsControllerTest < ActionController::TestCase
 
   [
     ["active", 5, ["aproject", "asubproject"], "anonymously_accessible_project"],
-    ["user1_with_load", 2, ["project_with_10_collections"], "project_with_2_pipelines_and_60_jobs"],
+    ["user1_with_load", 2, ["project_with_10_collections"], "project_with_2_pipelines_and_60_crs"],
     ["admin", 5, ["anonymously_accessible_project", "subproject_in_anonymous_accessible_project"], "aproject"],
   ].each do |user, page_size, tree_segment, unexpected|
     test "build my projects tree for #{user} user and verify #{unexpected} is omitted" do

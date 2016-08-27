@@ -138,9 +138,8 @@ func (v *UnixVolume) Touch(loc string) error {
 		return e
 	}
 	defer unlockfile(f)
-	now := time.Now().Unix()
-	utime := syscall.Utimbuf{now, now}
-	return syscall.Utime(p, &utime)
+	ts := syscall.NsecToTimespec(time.Now().UnixNano())
+	return syscall.UtimesNano(p, []syscall.Timespec{ts, ts})
 }
 
 // Mtime returns the stored timestamp for the given locator.
@@ -181,26 +180,24 @@ func (v *UnixVolume) stat(path string) (os.FileInfo, error) {
 	return stat, err
 }
 
-// Get retrieves a block identified by the locator string "loc", and
-// returns its contents as a byte slice.
-//
-// Get returns a nil buffer IFF it returns a non-nil error.
-func (v *UnixVolume) Get(loc string) ([]byte, error) {
+// Get retrieves a block, copies it to the given slice, and returns
+// the number of bytes copied.
+func (v *UnixVolume) Get(loc string, buf []byte) (int, error) {
 	path := v.blockPath(loc)
 	stat, err := v.stat(path)
 	if err != nil {
-		return nil, v.translateError(err)
+		return 0, v.translateError(err)
 	}
-	buf := bufs.Get(int(stat.Size()))
+	if stat.Size() > int64(len(buf)) {
+		return 0, TooLongError
+	}
+	var read int
+	size := int(stat.Size())
 	err = v.getFunc(path, func(rdr io.Reader) error {
-		_, err = io.ReadFull(rdr, buf)
+		read, err = io.ReadFull(rdr, buf[:size])
 		return err
 	})
-	if err != nil {
-		bufs.Put(buf)
-		return nil, err
-	}
-	return buf, nil
+	return read, err
 }
 
 // Compare returns nil if Get(loc) would return the same content as
@@ -309,7 +306,7 @@ var blockFileRe = regexp.MustCompile(`^[0-9a-f]{32}$`)
 //     e4de7a2810f5554cd39b36d8ddb132ff+67108864 1388701136
 //
 func (v *UnixVolume) IndexTo(prefix string, w io.Writer) error {
-	var lastErr error = nil
+	var lastErr error
 	rootdir, err := os.Open(v.root)
 	if err != nil {
 		return err
@@ -355,7 +352,7 @@ func (v *UnixVolume) IndexTo(prefix string, w io.Writer) error {
 			_, err = fmt.Fprint(w,
 				name,
 				"+", fileInfo[0].Size(),
-				" ", fileInfo[0].ModTime().Unix(),
+				" ", fileInfo[0].ModTime().UnixNano(),
 				"\n")
 		}
 		blockdir.Close()
@@ -400,10 +397,8 @@ func (v *UnixVolume) Trash(loc string) error {
 	// anyway (because the permission signatures have expired).
 	if fi, err := os.Stat(p); err != nil {
 		return err
-	} else {
-		if time.Since(fi.ModTime()) < blobSignatureTTL {
-			return nil
-		}
+	} else if time.Since(fi.ModTime()) < blobSignatureTTL {
+		return nil
 	}
 
 	if trashLifetime == 0 {
@@ -509,11 +504,14 @@ func (v *UnixVolume) String() string {
 	return fmt.Sprintf("[UnixVolume %s]", v.root)
 }
 
-// Writable returns false if all future Put, Mtime, and Delete calls are expected to fail.
+// Writable returns false if all future Put, Mtime, and Delete calls
+// are expected to fail.
 func (v *UnixVolume) Writable() bool {
 	return !v.readonly
 }
 
+// Replication returns the number of replicas promised by the
+// underlying device (currently assumed to be 1).
 func (v *UnixVolume) Replication() int {
 	return 1
 }
@@ -540,7 +538,7 @@ func (v *UnixVolume) translateError(err error) error {
 	}
 }
 
-var trashLocRegexp = regexp.MustCompile(`/([0-9a-f]{32})\.trash\.(\d+)$`)
+var unixTrashLocRegexp = regexp.MustCompile(`/([0-9a-f]{32})\.trash\.(\d+)$`)
 
 // EmptyTrash walks hierarchy looking for {hash}.trash.*
 // and deletes those with deadline < now.
@@ -556,7 +554,7 @@ func (v *UnixVolume) EmptyTrash() {
 		if info.Mode().IsDir() {
 			return nil
 		}
-		matches := trashLocRegexp.FindStringSubmatch(path)
+		matches := unixTrashLocRegexp.FindStringSubmatch(path)
 		if len(matches) != 3 {
 			return nil
 		}

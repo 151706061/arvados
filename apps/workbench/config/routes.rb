@@ -13,13 +13,18 @@ ArvadosWorkbench::Application.routes.draw do
   get "report_issue_popup" => 'actions#report_issue_popup', :as => :report_issue_popup
   post "report_issue" => 'actions#report_issue', :as => :report_issue
   get "star" => 'actions#star', :as => :star
+  get "all_processes" => 'work_units#index', :as => :all_processes
+  get "choose_work_unit_templates" => 'work_unit_templates#choose', :as => :choose_work_unit_templates
+  resources :work_units
   resources :nodes
   resources :humans
   resources :traits
   resources :api_client_authorizations
   resources :virtual_machines
   resources :containers
-  resources :container_requests
+  resources :container_requests do
+    post 'cancel', :on => :member
+  end
   get '/virtual_machines/:id/webshell/:login' => 'virtual_machines#webshell', :as => :webshell_virtual_machine
   resources :authorized_keys
   resources :job_tasks
@@ -95,6 +100,8 @@ ArvadosWorkbench::Application.routes.draw do
   resources :search do
     get 'choose', :on => :collection
   end
+
+  resources :workflows
 
   post 'actions' => 'actions#post'
   get 'actions' => 'actions#show'

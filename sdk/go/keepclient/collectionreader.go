@@ -209,6 +209,10 @@ GET:
 		}
 		var buf = make([]byte, fs.Offset+fs.Len)
 		_, err = io.ReadFull(rdr, buf)
+		errClosing := rdr.Close()
+		if err == nil {
+			err = errClosing
+		}
 		if err != nil {
 			r.err = err
 			close(r.errNotNil)
@@ -239,7 +243,7 @@ GET:
 	// In case we exited the above loop early: before returning,
 	// drain the toGet channel so its sender doesn't sit around
 	// blocking forever.
-	for _ = range r.toGet {
+	for range r.toGet {
 	}
 }
 

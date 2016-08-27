@@ -1,8 +1,12 @@
 FROM arvados/arvbox-base
+ARG arvados_version=master
+ARG sso_version=master
 
 RUN cd /usr/src && \
-    git clone https://github.com/curoverse/arvados.git && \
-    git clone https://github.com/curoverse/sso-devise-omniauth-provider.git sso
+    git clone --no-checkout https://github.com/curoverse/arvados.git && \
+    git -C arvados checkout ${arvados_version} && \
+    git clone --no-checkout https://github.com/curoverse/sso-devise-omniauth-provider.git sso && \
+    git -C sso checkout ${sso_version}
 
 ADD service/ /var/lib/arvbox/service
 RUN rmdir /etc/service && ln -sf /var/lib/arvbox/service /etc
@@ -14,4 +18,8 @@ RUN sudo -u arvbox /var/lib/arvbox/service/api/run-service --only-deps
 RUN sudo -u arvbox /var/lib/arvbox/service/workbench/run-service --only-deps
 RUN sudo -u arvbox /var/lib/arvbox/service/doc/run-service --only-deps
 RUN sudo -u arvbox /var/lib/arvbox/service/vm/run-service --only-deps
+RUN sudo -u arvbox /var/lib/arvbox/service/keep-web/run-service --only-deps
+RUN sudo -u arvbox /var/lib/arvbox/service/keepproxy/run-service --only-deps
+RUN sudo -u arvbox /var/lib/arvbox/service/arv-git-httpd/run-service --only-deps
+RUN sudo -u arvbox /usr/local/lib/arvbox/keep-setup.sh --only-deps
 RUN sudo -u arvbox /var/lib/arvbox/service/sdk/run-service

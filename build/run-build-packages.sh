@@ -82,74 +82,97 @@ declare -a PYTHON_BACKPORTS PYTHON3_BACKPORTS
 PYTHON2_VERSION=2.7
 PYTHON3_VERSION=$(python3 -c 'import sys; print("{v.major}.{v.minor}".format(v=sys.version_info))')
 
+## These defaults are suitable for any Debian-based distribution.
+# You can customize them as needed in distro sections below.
+PYTHON2_PACKAGE=python$PYTHON2_VERSION
+PYTHON2_PKG_PREFIX=python
+PYTHON2_PREFIX=/usr
+PYTHON2_INSTALL_LIB=lib/python$PYTHON2_VERSION/dist-packages
+
+PYTHON3_PACKAGE=python$PYTHON3_VERSION
+PYTHON3_PKG_PREFIX=python3
+PYTHON3_PREFIX=/usr
+PYTHON3_INSTALL_LIB=lib/python$PYTHON3_VERSION/dist-packages
+## End Debian Python defaults.
+
 case "$TARGET" in
     debian7)
         FORMAT=deb
-        PYTHON2_PACKAGE=python$PYTHON2_VERSION
-        PYTHON2_PKG_PREFIX=python
-        PYTHON3_PACKAGE=python$PYTHON3_VERSION
-        PYTHON3_PKG_PREFIX=python3
-        PYTHON_BACKPORTS=(python-gflags pyvcf google-api-python-client==1.4.2 \
+        PYTHON_BACKPORTS=(python-gflags==2.0 google-api-python-client==1.4.2 \
             oauth2client==1.5.2 pyasn1==0.1.7 pyasn1-modules==0.0.5 \
             rsa uritemplate httplib2 ws4py pykka six pyexecjs jsonschema \
             ciso8601 pycrypto backports.ssl_match_hostname llfuse==0.41.1 \
-            'pycurl<7.21.5' contextlib2 pyyaml 'rdflib>=4.2.0' 'rdflib-jsonld>=0.3.0' \
-            shellescape mistune)
-        PYTHON3_BACKPORTS=(docker-py six requests websocket-client)
+            'pycurl<7.21.5' contextlib2 pyyaml 'rdflib>=4.2.0' \
+            shellescape mistune typing avro ruamel.ordereddict)
+        PYTHON3_BACKPORTS=(docker-py==1.7.2 six requests websocket-client)
         ;;
     debian8)
         FORMAT=deb
-        PYTHON2_PACKAGE=python$PYTHON2_VERSION
-        PYTHON2_PKG_PREFIX=python
-        PYTHON3_PACKAGE=python$PYTHON3_VERSION
-        PYTHON3_PKG_PREFIX=python3
-        PYTHON_BACKPORTS=(python-gflags pyvcf google-api-python-client==1.4.2 \
+        PYTHON_BACKPORTS=(python-gflags==2.0 google-api-python-client==1.4.2 \
             oauth2client==1.5.2 pyasn1==0.1.7 pyasn1-modules==0.0.5 \
             rsa uritemplate httplib2 ws4py pykka six pyexecjs jsonschema \
             ciso8601 pycrypto backports.ssl_match_hostname llfuse==0.41.1 \
-            'pycurl<7.21.5' pyyaml 'rdflib>=4.2.0' 'rdflib-jsonld>=0.3.0' \
-            shellescape mistune)
-        PYTHON3_BACKPORTS=(docker-py six requests websocket-client)
+            'pycurl<7.21.5' pyyaml 'rdflib>=4.2.0' \
+            shellescape mistune typing avro ruamel.ordereddict)
+        PYTHON3_BACKPORTS=(docker-py==1.7.2 six requests websocket-client)
         ;;
     ubuntu1204)
         FORMAT=deb
-        PYTHON2_PACKAGE=python$PYTHON2_VERSION
-        PYTHON2_PKG_PREFIX=python
-        PYTHON3_PACKAGE=python$PYTHON3_VERSION
-        PYTHON3_PKG_PREFIX=python3
-        PYTHON_BACKPORTS=(python-gflags pyvcf google-api-python-client==1.4.2 \
+        PYTHON_BACKPORTS=(python-gflags==2.0 google-api-python-client==1.4.2 \
             oauth2client==1.5.2 pyasn1==0.1.7 pyasn1-modules==0.0.5 \
             rsa uritemplate httplib2 ws4py pykka six pyexecjs jsonschema \
             ciso8601 pycrypto backports.ssl_match_hostname llfuse==0.41.1 \
             contextlib2 'pycurl<7.21.5' pyyaml 'rdflib>=4.2.0' \
-            'rdflib-jsonld>=0.3.0' shellescape mistune)
-        PYTHON3_BACKPORTS=(docker-py six requests websocket-client)
+            shellescape mistune typing avro isodate ruamel.ordereddict)
+        PYTHON3_BACKPORTS=(docker-py==1.7.2 six requests websocket-client)
         ;;
     ubuntu1404)
         FORMAT=deb
-        PYTHON2_PACKAGE=python$PYTHON2_VERSION
-        PYTHON2_PKG_PREFIX=python
-        PYTHON3_PACKAGE=python$PYTHON3_VERSION
-        PYTHON3_PKG_PREFIX=python3
-        PYTHON_BACKPORTS=(pyasn1==0.1.7 pyvcf pyasn1-modules==0.0.5 llfuse==0.41.1 ciso8601 \
+        PYTHON_BACKPORTS=(pyasn1==0.1.7 pyasn1-modules==0.0.5 llfuse==0.41.1 ciso8601 \
             google-api-python-client==1.4.2 six uritemplate oauth2client==1.5.2 httplib2 \
             rsa 'pycurl<7.21.5' backports.ssl_match_hostname pyyaml 'rdflib>=4.2.0' \
-            'rdflib-jsonld>=0.3.0' shellescape mistune)
-        PYTHON3_BACKPORTS=(docker-py requests websocket-client)
+            shellescape mistune typing avro ruamel.ordereddict)
+        PYTHON3_BACKPORTS=(docker-py==1.7.2 requests websocket-client)
         ;;
     centos6)
         FORMAT=rpm
         PYTHON2_PACKAGE=$(rpm -qf "$(which python$PYTHON2_VERSION)" --queryformat '%{NAME}\n')
         PYTHON2_PKG_PREFIX=$PYTHON2_PACKAGE
+        PYTHON2_PREFIX=/opt/rh/python27/root/usr
+        PYTHON2_INSTALL_LIB=lib/python$PYTHON2_VERSION/site-packages
         PYTHON3_PACKAGE=$(rpm -qf "$(which python$PYTHON3_VERSION)" --queryformat '%{NAME}\n')
         PYTHON3_PKG_PREFIX=$PYTHON3_PACKAGE
-        PYTHON_BACKPORTS=(python-gflags pyvcf google-api-python-client==1.4.2 \
+        PYTHON3_PREFIX=/opt/rh/python33/root/usr
+        PYTHON3_INSTALL_LIB=lib/python$PYTHON3_VERSION/site-packages
+        PYTHON_BACKPORTS=(python-gflags==2.0 google-api-python-client==1.4.2 \
             oauth2client==1.5.2 pyasn1==0.1.7 pyasn1-modules==0.0.5 \
             rsa uritemplate httplib2 ws4py pykka six pyexecjs jsonschema \
             ciso8601 pycrypto backports.ssl_match_hostname 'pycurl<7.21.5' \
             python-daemon lockfile llfuse==0.41.1 'pbr<1.0' pyyaml \
-            'rdflib>=4.2.0' 'rdflib-jsonld>=0.3.0' shellescape mistune)
-        PYTHON3_BACKPORTS=(docker-py six requests websocket-client)
+            'rdflib>=4.2.0' shellescape mistune typing avro requests \
+            isodate pyparsing sparqlwrapper html5lib==0.9999999 keepalive \
+            ruamel.ordereddict)
+        PYTHON3_BACKPORTS=(docker-py==1.7.2 six requests websocket-client)
+        export PYCURL_SSL_LIBRARY=nss
+        ;;
+    centos7)
+        FORMAT=rpm
+        PYTHON2_PACKAGE=$(rpm -qf "$(which python$PYTHON2_VERSION)" --queryformat '%{NAME}\n')
+        PYTHON2_PKG_PREFIX=$PYTHON2_PACKAGE
+        PYTHON2_INSTALL_LIB=lib/python$PYTHON2_VERSION/site-packages
+        PYTHON3_PACKAGE=$(rpm -qf "$(which python$PYTHON3_VERSION)" --queryformat '%{NAME}\n')
+        PYTHON3_PKG_PREFIX=$PYTHON3_PACKAGE
+        PYTHON3_PREFIX=/opt/rh/python33/root/usr
+        PYTHON3_INSTALL_LIB=lib/python$PYTHON3_VERSION/site-packages
+        PYTHON_BACKPORTS=(python-gflags==2.0 google-api-python-client==1.4.2 \
+            oauth2client==1.5.2 pyasn1==0.1.7 pyasn1-modules==0.0.5 \
+            rsa uritemplate httplib2 ws4py pykka pyexecjs jsonschema \
+            ciso8601 pycrypto 'pycurl<7.21.5' \
+            python-daemon llfuse==0.41.1 'pbr<1.0' pyyaml \
+            'rdflib>=4.2.0' shellescape mistune typing avro \
+            isodate pyparsing sparqlwrapper html5lib==0.9999999 keepalive \
+            ruamel.ordereddict)
+        PYTHON3_BACKPORTS=(docker-py==1.7.2 six requests websocket-client)
         export PYCURL_SSL_LIBRARY=nss
         ;;
     *)
@@ -204,6 +227,7 @@ fi
 chmod o+r "$WORKSPACE" -R
 
 # More cleanup - make sure all executables that we'll package are 755
+cd "$WORKSPACE"
 find -type d -name 'bin' |xargs -I {} find {} -type f |xargs -I {} chmod 755 {}
 
 # Now fix our umask to something better suited to building and publishing
@@ -214,6 +238,7 @@ debug_echo "umask is" `umask`
 
 if [[ ! -d "$WORKSPACE/packages/$TARGET" ]]; then
   mkdir -p $WORKSPACE/packages/$TARGET
+  chown --reference="$WORKSPACE" "$WORKSPACE/packages/$TARGET"
 fi
 
 # Perl packages
@@ -355,7 +380,7 @@ elif [[ $TARGET =~ centos6 ]]; then
             rpm2cpio ${LIBFUSE_DIR}/fuse-2.9.2-6.el7.src.rpm | cpio -i
             perl -pi -e 's/Conflicts:\s*filesystem.*//g' fuse.spec
         )
-        # build rpms from source 
+        # build rpms from source
         rpmbuild -bb /root/rpmbuild/SOURCES/fuse.spec
         rm -f fuse-2.9.2-6.el7.src.rpm
         # move built RPMs to LIBFUSE_DIR
@@ -376,18 +401,30 @@ fi
 # Go binaries
 cd $WORKSPACE/packages/$TARGET
 export GOPATH=$(mktemp -d)
-package_go_binary services/keepstore keepstore \
-    "Keep storage daemon, accessible to clients on the LAN"
-package_go_binary services/keepproxy keepproxy \
-    "Make a Keep cluster accessible to clients that are not on the LAN"
-package_go_binary services/keep-web keep-web \
-    "Static web hosting service for user data stored in Arvados Keep"
-package_go_binary services/datamanager arvados-data-manager \
-    "Ensure block replication levels, report disk usage, and determine which blocks should be deleted when space is needed"
+package_go_binary sdk/go/crunchrunner crunchrunner \
+    "Crunchrunner executes a command inside a container and uploads the output"
 package_go_binary services/arv-git-httpd arvados-git-httpd \
     "Provide authenticated http access to Arvados-hosted git repositories"
+package_go_binary services/crunch-dispatch-local crunch-dispatch-local \
+    "Dispatch Crunch containers on the local system"
+package_go_binary services/crunch-dispatch-slurm crunch-dispatch-slurm \
+    "Dispatch Crunch containers to a SLURM cluster"
+package_go_binary services/crunch-run crunch-run \
+    "Supervise a single Crunch container"
 package_go_binary services/crunchstat crunchstat \
     "Gather cpu/memory/network statistics of running Crunch jobs"
+package_go_binary services/datamanager arvados-data-manager \
+    "Ensure block replication levels, report disk usage, and determine which blocks should be deleted when space is needed"
+package_go_binary services/keep-balance keep-balance \
+    "Rebalance and garbage-collect data blocks stored in Arvados Keep"
+package_go_binary services/keepproxy keepproxy \
+    "Make a Keep cluster accessible to clients that are not on the LAN"
+package_go_binary services/keepstore keepstore \
+    "Keep storage daemon, accessible to clients on the LAN"
+package_go_binary services/keep-web keep-web \
+    "Static web hosting service for user data stored in Arvados Keep"
+package_go_binary tools/keep-block-check keep-block-check \
+    "Verify that all data from one set of Keep servers to another was copied"
 package_go_binary tools/keep-rsync keep-rsync \
     "Copy all data from one set of Keep servers to another"
 
@@ -405,7 +442,7 @@ fpm_build $WORKSPACE/sdk/python "${PYTHON2_PKG_PREFIX}-arvados-python-client" 'C
 # cwl-runner
 cd $WORKSPACE/packages/$TARGET
 rm -rf "$WORKSPACE/sdk/cwl/build"
-fpm_build $WORKSPACE/sdk/cwl "${PYTHON2_PKG_PREFIX}-arvados-cwl-runner" 'Curoverse, Inc.' 'python' "$(awk '($1 == "Version:"){print $2}' $WORKSPACE/sdk/cwl/arvados_cwl_runner.egg-info/PKG-INFO)" "--url=https://arvados.org" "--description=The Arvados CWL runner"
+fpm_build $WORKSPACE/sdk/cwl "${PYTHON2_PKG_PREFIX}-arvados-cwl-runner" 'Curoverse, Inc.' 'python' "$(awk '($1 == "Version:"){print $2}' $WORKSPACE/sdk/cwl/arvados_cwl_runner.egg-info/PKG-INFO)" "--url=https://arvados.org" "--description=The Arvados CWL runner" --iteration 3
 
 # schema_salad. This is a python dependency of arvados-cwl-runner,
 # but we can't use the usual PYTHONPACKAGES way to build this package due to the
@@ -422,10 +459,18 @@ fpm_build $WORKSPACE/sdk/cwl "${PYTHON2_PKG_PREFIX}-arvados-cwl-runner" 'Curover
 # So we build this thing separately.
 #
 # Ward, 2016-03-17
-fpm --maintainer='Ward Vandewege <ward@curoverse.com>' -s python -t deb --exclude=*/dist-packages/tests/* --exclude=*/site-packages/tests/* --deb-ignore-iteration-in-dependencies -n python-schema-salad --iteration 1 --python-bin python2.7 --python-easyinstall easy_install-2.7 --python-package-name-prefix python --depends python2.7 -v 1.7.20160316203940 schema_salad
+fpm_build schema_salad "" "" python 1.16.20160810195039
+
+# And schema_salad now depends on ruamel-yaml, which apparently has a braindead setup.py that requires special arguments to build (otherwise, it aborts with 'error: you have to install with "pip install ."'). Sigh.
+# Ward, 2016-05-26
+# ...and schema_salad 1.12.20160610104117 doesn't work with ruamel-yaml > 0.11.11.
+fpm_build ruamel.yaml "" "" python 0.11.11 --python-setup-py-arguments "--single-version-externally-managed"
 
 # And for cwltool we have the same problem as for schema_salad. Ward, 2016-03-17
-fpm --maintainer='Ward Vandewege <ward@curoverse.com>' -s python -t deb --exclude=*/dist-packages/tests/* --exclude=*/site-packages/tests/* --deb-ignore-iteration-in-dependencies -n python-cwltool --iteration 1 --python-bin python2.7 --python-easyinstall easy_install-2.7 --python-package-name-prefix python --depends python2.7 -v 1.0.20160316204054 cwltool
+fpm_build cwltool "" "" python 1.0.20160811184335
+
+# FPM eats the trailing .0 in the python-rdflib-jsonld package when built with 'rdflib-jsonld>=0.3.0'. Force the version. Ward, 2016-03-25
+fpm_build rdflib-jsonld "" "" python 0.3.0
 
 # The PAM module
 if [[ $TARGET =~ debian|ubuntu ]]; then
@@ -450,6 +495,11 @@ fpm_build $WORKSPACE/services/nodemanager arvados-node-manager 'Curoverse, Inc.'
 cd $WORKSPACE/packages/$TARGET
 rm -rf "$WORKSPACE/services/dockercleaner/build"
 fpm_build $WORKSPACE/services/dockercleaner arvados-docker-cleaner 'Curoverse, Inc.' 'python3' "$(awk '($1 == "Version:"){print $2}' $WORKSPACE/services/dockercleaner/arvados_docker_cleaner.egg-info/PKG-INFO)" "--url=https://arvados.org" "--description=The Arvados Docker image cleaner"
+
+# The Arvados crunchstat-summary tool
+cd $WORKSPACE/packages/$TARGET
+rm -rf "$WORKSPACE/tools/crunchstat-summary/build"
+fpm_build $WORKSPACE/tools/crunchstat-summary ${PYTHON2_PKG_PREFIX}-crunchstat-summary 'Curoverse, Inc.' 'python' "$(awk '($1 == "Version:"){print $2}' $WORKSPACE/tools/crunchstat-summary/crunchstat_summary.egg-info/PKG-INFO)" "--url=https://arvados.org" "--description=Crunchstat-summary reads Arvados Crunch log files and summarize resource usage"
 
 # Forked libcloud
 LIBCLOUD_DIR=$(mktemp -d)
@@ -486,14 +536,15 @@ for deppkg in "${PYTHON_BACKPORTS[@]}"; do
                 set -e
                 cd "$pyfpm_workdir"
                 pip install "${PIP_DOWNLOAD_SWITCHES[@]}" --download . "$deppkg"
-                tar -xf "$deppkg"-*.tar*
+                # Sometimes pip gives us a tarball, sometimes a zip file...
+                DOWNLOADED=`ls $deppkg-*`
+                [[ "$DOWNLOADED" =~ ".tar" ]] && tar -xf $DOWNLOADED
+                [[ "$DOWNLOADED" =~ ".zip" ]] && unzip $DOWNLOADED
                 cd "$deppkg"-*/
                 "python$PYTHON2_VERSION" setup.py $DASHQ_UNLESS_DEBUG egg_info build
                 chmod -R go+rX .
                 set +e
-                # --iteration 2 provides an upgrade for previously built
-                # buggy packages.
-                fpm_build . "$outname" "" python "" --iteration 2
+                fpm_build . "$outname" "" python "" --iteration 3
                 # The upload step uses the package timestamp to determine
                 # whether it's new.  --no-clobber plays nice with that.
                 mv --no-clobber "$outname"*.$FORMAT "$WORKSPACE/packages/$TARGET"

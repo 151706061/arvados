@@ -17,7 +17,9 @@ class ContainerRequest < ArvadosModel
   validates :command, :container_image, :output_path, :cwd, :presence => true
   validate :validate_state_change
   validate :validate_change
+  validate :validate_runtime_constraints
   after_save :update_priority
+  before_create :set_requesting_container_uuid
 
   api_accessible :user, extend: :common do |t|
     t.add :command
@@ -78,30 +80,105 @@ class ContainerRequest < ArvadosModel
     self.cwd ||= "."
   end
 
-  # Turn a container request into a container.
+  # Create a new container (or find an existing one) to satisfy this
+  # request.
   def resolve
-    # In the future this will do things like resolve symbolic git and keep
-    # references to content addresses.
-    Container.create!({ :command => self.command,
-                        :container_image => self.container_image,
-                        :cwd => self.cwd,
-                        :environment => self.environment,
-                        :mounts => self.mounts,
-                        :output_path => self.output_path,
-                        :runtime_constraints => self.runtime_constraints })
+    c_mounts = mounts_for_container
+    c_runtime_constraints = runtime_constraints_for_container
+    c_container_image = container_image_for_container
+    c = act_as_system_user do
+      Container.create!(command: self.command,
+                        cwd: self.cwd,
+                        environment: self.environment,
+                        output_path: self.output_path,
+                        container_image: c_container_image,
+                        mounts: c_mounts,
+                        runtime_constraints: c_runtime_constraints)
+    end
+    self.container_uuid = c.uuid
+  end
+
+  # Return a runtime_constraints hash that complies with
+  # self.runtime_constraints but is suitable for saving in a container
+  # record, i.e., has specific values instead of ranges.
+  #
+  # Doing this as a step separate from other resolutions, like "git
+  # revision range to commit hash", makes sense only when there is no
+  # opportunity to reuse an existing container (e.g., container reuse
+  # is not implemented yet, or we have already found that no existing
+  # containers are suitable).
+  def runtime_constraints_for_container
+    rc = {}
+    runtime_constraints.each do |k, v|
+      if v.is_a? Array
+        rc[k] = v[0]
+      else
+        rc[k] = v
+      end
+    end
+    rc
+  end
+
+  # Return a mounts hash suitable for a Container, i.e., with every
+  # readonly collection UUID resolved to a PDH.
+  def mounts_for_container
+    c_mounts = {}
+    mounts.each do |k, mount|
+      mount = mount.dup
+      c_mounts[k] = mount
+      if mount['kind'] != 'collection'
+        next
+      end
+      if (uuid = mount.delete 'uuid')
+        c = Collection.
+          readable_by(current_user).
+          where(uuid: uuid).
+          select(:portable_data_hash).
+          first
+        if !c
+          raise ActiveRecord::RecordNotFound.new "cannot mount collection #{uuid.inspect}: not found"
+        end
+        if mount['portable_data_hash'].nil?
+          # PDH not supplied by client
+          mount['portable_data_hash'] = c.portable_data_hash
+        elsif mount['portable_data_hash'] != c.portable_data_hash
+          # UUID and PDH supplied by client, but they don't agree
+          raise ArgumentError.new "cannot mount collection #{uuid.inspect}: current portable_data_hash #{c.portable_data_hash.inspect} does not match #{c['portable_data_hash'].inspect} in request"
+        end
+      end
+    end
+    return c_mounts
+  end
+
+  # Return a container_image PDH suitable for a Container.
+  def container_image_for_container
+    coll = Collection.for_latest_docker_image(container_image)
+    if !coll
+      raise ActiveRecord::RecordNotFound.new "docker image #{container_image.inspect} not found"
+    end
+    return coll.portable_data_hash
   end
 
   def set_container
-    if self.container_uuid_changed?
-      if not current_user.andand.is_admin and not self.container_uuid.nil?
-        errors.add :container_uuid, "can only be updated to nil."
-      end
-    else
-      if self.state_changed?
-        if self.state == Committed and (self.state_was == Uncommitted or self.state_was.nil?)
-          act_as_system_user do
-            self.container_uuid = self.resolve.andand.uuid
-          end
+    if (container_uuid_changed? and
+        not current_user.andand.is_admin and
+        not container_uuid.nil?)
+      errors.add :container_uuid, "can only be updated to nil."
+      return false
+    end
+    if state_changed? and state == Committed and container_uuid.nil?
+      resolve
+    end
+  end
+
+  def validate_runtime_constraints
+    case self.state
+    when Committed
+      ['vcpus', 'ram'].each do |k|
+        if not (runtime_constraints.include? k and
+                runtime_constraints[k].is_a? Integer and
+                runtime_constraints[k] > 0)
+          errors.add :runtime_constraints, "#{k} must be a positive integer"
         end
       end
     end
@@ -128,8 +205,8 @@ class ContainerRequest < ArvadosModel
         errors.add :priority, "cannot be nil"
       end
 
-      # Can update priority, container count.
-      permitted.push :priority, :container_count_max, :container_uuid
+      # Can update priority, container count, name and description
+      permitted.push :priority, :container_count_max, :container_uuid, :name, :description
 
       if self.state_changed?
         # Allow create-and-commit in a single operation.
@@ -140,12 +217,12 @@ class ContainerRequest < ArvadosModel
       end
 
     when Final
-      if not current_user.andand.is_admin
+      if not current_user.andand.is_admin and not (self.name_changed? || self.description_changed?)
         errors.add :state, "of container request can only be set to Final by system."
       end
 
-      if self.state_changed?
-          permitted.push :state
+      if self.state_changed? || self.name_changed? || self.description_changed?
+          permitted.push :state, :name, :description
       else
         errors.add :state, "does not allow updates"
       end
@@ -158,18 +235,24 @@ class ContainerRequest < ArvadosModel
   end
 
   def update_priority
-    if [Committed, Final].include? self.state and (self.state_changed? or
-                                                   self.priority_changed? or
-                                                   self.container_uuid_changed?)
-      [self.container_uuid_was, self.container_uuid].each do |cuuid|
-        unless cuuid.nil?
-          c = Container.find_by_uuid cuuid
-          act_as_system_user do
-            c.update_priority!
-          end
-        end
+    if self.state_changed? or
+        self.priority_changed? or
+        self.container_uuid_changed?
+      act_as_system_user do
+        Container.
+          where('uuid in (?)',
+                [self.container_uuid_was, self.container_uuid].compact).
+          map(&:update_priority!)
       end
     end
   end
 
+  def set_requesting_container_uuid
+    return true if self.requesting_container_uuid   # already set
+
+    token_uuid = current_api_client_authorization.andand.uuid
+    container = Container.where('auth_uuid=?', token_uuid).order('created_at desc').first
+    self.requesting_container_uuid = container.uuid if container
+    true
+  end
 end
